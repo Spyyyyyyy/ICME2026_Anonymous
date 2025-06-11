@@ -2,11 +2,55 @@ import random
 import time
 import datetime
 import sys
+import collections
 
 from torch.autograd import Variable
 import torch
 from visdom import Visdom
 import numpy as np
+import os
+
+from torchvision.utils import save_image
+import torchvision.transforms as T
+import torch.nn.functional as F
+import torchvision.utils as vutils
+
+def load_state_dict_strip_module(pth_path):
+    """
+    加载pth文件，自动去除state_dict中参数名的'module.'前缀，返回处理后的state_dict。
+    :param pth_path: pth文件路径
+    :return: 处理后的state_dict
+    """
+    import torch
+    from collections import OrderedDict
+    state_dict = torch.load(pth_path, map_location='cpu')
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k.replace("module.", "")  # 去掉'module.'前缀
+        new_state_dict[name] = v
+    return new_state_dict
+
+def flatten(d, parent_key='', sep='.'):
+    items = []
+    for k, v in d.items():
+        new_key = parent_key + sep + k if parent_key else k
+        # if isinstance(v, collections.MutableMapping):
+        if isinstance(v, collections.abc.MutableMapping):
+            items.extend(flatten(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+def set_seed(device, seed=0):
+    # random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if device.type == 'cuda':
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 def tensor2image(tensor):
     image = 127.5*(tensor[0].cpu().float().numpy() + 1.0)
@@ -116,3 +160,30 @@ def weights_init_normal(m):
         torch.nn.init.normal(m.weight.data, 1.0, 0.02)
         torch.nn.init.constant(m.bias.data, 0.0)
 
+def save_fake_image(fake_B, A_core_names, A_coords, save_dir):
+    """
+    fake_B: torch.Tensor, shape [N, C, H, W]
+    A_core_names: list/tuple/array, 长度为N
+    A_coords: list/tuple/array, shape [N, 2] 或 [(y1, x1), (y2, x2), ...]
+    save_dir: str, 保存目录
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    to_pil = T.ToPILImage()
+    N = fake_B.shape[0]
+    for idx in range(N):
+        img = fake_B[idx].cpu().detach()
+        img_pil = to_pil(img)
+        core_name = A_core_names[idx]
+        coords = A_coords[idx]
+        save_path = os.path.join(save_dir, f"{core_name}_y_{coords[0]}_x_{coords[1]}.png")
+        img_pil.save(save_path)
+        print(f"已保存: {save_path}")
+
+def save_stack_fake_image(src, dst, fake, save_path, png_id):
+    stacked_images = torch.stack((src, fake, dst), dim=1)
+    stacked_images = 0.5*(stacked_images + 1.0)
+    mixed_images = stacked_images.view(-1, *src.shape[1:])
+    mixed_images = F.interpolate(mixed_images, size=(256, 256), mode='bilinear', align_corners=False)
+    grid = vutils.make_grid(mixed_images, nrow=6, padding=2, normalize=True, scale_each=True)
+    save_image(grid, f"{save_path}/fake_{png_id}.png", normalize=True)
+    print(f"save fake image to {save_path}/fake_{png_id}.png")
