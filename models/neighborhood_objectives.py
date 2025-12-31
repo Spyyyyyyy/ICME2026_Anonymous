@@ -73,14 +73,14 @@ class GANLoss(nn.Module):
 
 
 class PatchNCELoss(nn.Module):
-    def __init__(self, args, device):
+    def __init__(self, args, device, specific_T=None):
         super().__init__()
         self.device = device
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction='none')
         self.mask_dtype = torch.uint8 if version.parse(torch.__version__) < version.parse('1.2.0') else torch.bool
         self.nce_includes_all_negatives_from_minibatch = args['train.params.loss.gan_loss.nce_includes_all_negatives_from_minibatch']
         self.patch_batch_size = args['train.params.patch_batch_size_per_gpu']
-        self.nce_T = args['train.params.loss.gan_loss.nce_T']
+        self.nce_T = specific_T if specific_T is not None else args['train.params.loss.gan_loss.nce_T']
 
     def forward(self, feat_q, feat_k):
         feat_k = feat_k.detach()

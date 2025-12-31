@@ -6,7 +6,7 @@ from typing import Dict, Any
 from copy import deepcopy
 import numpy as np
 import functools
-
+import torch.nn.functional as F
 
 # Normalizer configuration
 NORM_CFG = {
@@ -187,7 +187,7 @@ def define_D(args):
     if netD == 'n_layers':
         net = Discriminator(
             # input_nc=args['train.data.input_nc'],
-            input_nc=3,
+            input_nc=args['train.model.discriminator.input_nc'] if args['train.model.discriminator.input_nc'] else 3,
             ndf=args['train.model.discriminator.ndf'],
             n_layers=args['train.model.discriminator.n_layers_D'],
             norm_type=args['train.model.discriminator.normD'],
@@ -219,55 +219,80 @@ def define_F(args):
 # Nuclei Density Map Estimator
 ###############################################################################
 
+class UnetEstimator(nn.Module):
+    def __init__(self, input_nc, output_nc, features=32):
+        super(UnetEstimator, self).__init__()
+        # 编码器
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(input_nc, features, 3, padding=1),
+            nn.BatchNorm2d(features),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features, features, 3, padding=1),
+            nn.BatchNorm2d(features),
+            nn.ReLU(inplace=True)
+        )
+        self.pool1 = nn.MaxPool2d(2)
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(features, features*2, 3, padding=1),
+            nn.BatchNorm2d(features*2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features*2, features*2, 3, padding=1),
+            nn.BatchNorm2d(features*2),
+            nn.ReLU(inplace=True)
+        )
+        self.pool2 = nn.MaxPool2d(2)
+        # bottleneck
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(features*2, features*4, 3, padding=1),
+            nn.BatchNorm2d(features*4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features*4, features*4, 3, padding=1),
+            nn.BatchNorm2d(features*4),
+            nn.ReLU(inplace=True)
+        )
+        # 解码器
+        self.up2 = nn.ConvTranspose2d(features*4, features*2, 2, stride=2)
+        self.dec2 = nn.Sequential(
+            nn.Conv2d(features*4, features*2, 3, padding=1),
+            nn.BatchNorm2d(features*2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features*2, features*2, 3, padding=1),
+            nn.BatchNorm2d(features*2),
+            nn.ReLU(inplace=True)
+        )
+        self.up1 = nn.ConvTranspose2d(features*2, features, 2, stride=2)
+        self.dec1 = nn.Sequential(
+            nn.Conv2d(features*2, features, 3, padding=1),
+            nn.BatchNorm2d(features),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features, features, 3, padding=1),
+            nn.BatchNorm2d(features),
+            nn.ReLU(inplace=True)
+        )
+        self.final = nn.Conv2d(features, output_nc, 1)
+        self.out_act = nn.Sigmoid()
 
-# def define_E(input_nc, output_nc, nef, n_blocks, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[]):
+    def forward(self, x):
+        # x: [batch, input_nc, H, W]
+        enc1 = self.enc1(x)
+        enc2 = self.enc2(self.pool1(enc1))
+        bottleneck = self.bottleneck(self.pool2(enc2))
+        up2 = self.up2(bottleneck)
+        dec2 = self.dec2(torch.cat([up2, enc2], dim=1))
+        up1 = self.up1(dec2)
+        dec1 = self.dec1(torch.cat([up1, enc1], dim=1))
+        out = self.final(dec1)
+        return self.out_act(out)
+
+
 def define_E(input_nc, output_nc, args):
-    nef = args['train.model.estimator.nef']
-    n_blocks = args['train.model.estimator.n_blocks']
-    norm = args['train.model.estimator.norm']
+    features = args.get('train.model.estimator.nef', 32)
     init_type = args['train.model.init_type']
     init_gain = args['train.model.init_gain']
     gpu_ids = args['gpu_ids']
-    
-    norm_layer = get_norm_layer(norm_type=norm)
-    net = NucleiDensityMapEstimator(input_nc, output_nc, nef, n_blocks, norm_layer)
+
+    net = UnetEstimator(input_nc, output_nc, features)
     return init_net(net, init_type, init_gain, gpu_ids)
-
-
-###############################################################################
-# Estimator Modules
-###############################################################################
-
-
-class NucleiDensityMapEstimator(nn.Module):
-    def __init__(self, input_nc, output_nc, nef=64, n_blocks=6, norm_layer=nn.BatchNorm2d, use_dropout=False, padding_type='reflect'):
-        super(NucleiDensityMapEstimator, self).__init__()
-        
-        if type(norm_layer) == functools.partial:
-            use_bias = norm_layer.func == nn.InstanceNorm2d
-        else:
-            use_bias = norm_layer == nn.InstanceNorm2d
-
-        model = [nn.Conv2d(input_nc, nef, kernel_size=7, padding='same', bias=use_bias), norm_layer(nef), nn.ReLU(True)]
-        
-        for _ in range(n_blocks):
-            model += [ResnetBlock(nef, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
-        
-        model += [nn.Conv2d(nef, output_nc, kernel_size=7, padding='same')]
-        model += [nn.Sigmoid()]
-        self.model = nn.Sequential(*model)
-
-    def forward(self, feats):
-        size = feats[0].shape[-2:]
-        
-        aligned_feats = []
-        for i in range(len(feats)):
-            aligned_feats.append(F.interpolate(feats[i], size=size, mode='bilinear', align_corners=True))
-        fusion_feats = torch.cat(aligned_feats, dim=1)
-        
-        density = self.model(fusion_feats)
-
-        return density
 
 
 ##############################################################################
@@ -449,7 +474,7 @@ class GeneratorBasicBlock(nn.Module):
                                              kernel_size=kernel_size, stride=stride,
                                              padding=padding, output_padding=1, bias=use_bias)
             else:
-                self.upsample = Upsample(in_features)
+                self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
 
         if not self.no_antialias_up:
             self.conv = nn.Conv2d(
@@ -625,7 +650,7 @@ class Generator(nn.Module):
     #     reserved = torch.cuda.memory_reserved() / 1024 / 1024  # MB
     #     print(f"{message}: Allocated {allocated:.2f} MB, Reserved {reserved:.2f} MB")
 
-    def forward(self, x, encode_only=False, num_patches=256, patch_ids=None):
+    def forward(self, x, encode_only=False, num_patches=256, patch_ids=None, spatial_shape=False):
         if not encode_only:
             x = self.reflectionpad(x)
             x = self.block1(x)
@@ -640,23 +665,27 @@ class Generator(nn.Module):
         else:
             return_ids = []
             return_feats = []
+            return_shapes = []  # <--- 新增
             mlp_id = 0
 
             # 0
             x = self.reflectionpad(x)
-            self.append_sample_feature(
-                x,
-                return_ids,
-                return_feats,
-                mlp_id=mlp_id,
-                num_patches=num_patches,
-                patch_ids=patch_ids,
-            )
-            mlp_id += 1
+            # 不在RGB通道提取特征
+            # return_shapes.append(x.shape[2:])  # <--- 新增: 记录 (H, W)
+            # self.append_sample_feature(
+            #     x,
+            #     return_ids,
+            #     return_feats,
+            #     mlp_id=mlp_id,
+            #     num_patches=num_patches,
+            #     patch_ids=patch_ids,
+            # )
+            # mlp_id += 1
 
             # 4
             x = self.block1(x)
             x_hook, x = self.downsampleblock2.forward_hook(x)
+            return_shapes.append(x_hook.shape[2:])  # <--- 新增: 记录 (H, W)
             self.append_sample_feature(
                 x_hook,
                 return_ids,
@@ -669,6 +698,7 @@ class Generator(nn.Module):
 
             # 8
             x_hook, x = self.downsampleblock3.forward_hook(x)
+            return_shapes.append(x_hook.shape[2:])  # <--- 新增: 记录 (H, W)
             self.append_sample_feature(
                 x_hook,
                 return_ids,
@@ -683,6 +713,7 @@ class Generator(nn.Module):
             for resnet_layer_id, resnet_layer in enumerate(self.resnetblocks4):
                 x = resnet_layer(x)
                 if resnet_layer_id in [0, 4]:
+                    return_shapes.append(x.shape[2:])  # <--- 新增: 记录 (H, W)
                     self.append_sample_feature(
                         x,
                         return_ids,
@@ -693,7 +724,12 @@ class Generator(nn.Module):
                     )
                     mlp_id += 1
 
-            return return_feats, return_ids
+            # 修改返回值，使其包含空间形状
+            if not spatial_shape:
+                return return_feats, return_ids
+            else:
+                return_shapes_tensor = torch.tensor(return_shapes, device=x.device, dtype=torch.long)
+                return return_feats, return_ids, return_shapes_tensor
 
 
 class Discriminator(nn.Module):

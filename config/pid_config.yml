@@ -1,25 +1,28 @@
 train:
   data:
-    input_nc: 4
+    input_nc: 3
     output_nc: 3
     patch_size: 2048
-    downsample: 8 # patch的下采样等级
+    downsample: 2
+    resize_size: 512
+    crop_size: 256
     max_src_samples: -1
     load_in_ram: true
   model:
     model_name: cut
     init_gain: 0.02
     init_type: normal
-    no_antialias: true
-    no_antialias_up: true
+    no_antialias: false
+    no_antialias_up: false
     discriminator:
-      n_layers_D: 3
-      ndf: 32
+      input_nc: 3
+      n_layers_D: 5
+      ndf: 64
       netD: n_layers
       normD: instance
     generator:
-      netG: resnet_9blocks
-      ngf: 32
+      netG: resnet_6blocks
+      ngf: 64
       normG: instance
     projector:
       netF: mlp_sample
@@ -34,31 +37,44 @@ train:
     epoch: 0
     n_epochs: 100
     n_epochs_decay: 50
-    patch_batch_size: 96 # cpt : 16 * 8
+    patch_batch_size: 64 
     patch_batch_size_per_gpu: 16
     patch_norm: true
     patch_clip: true
     num_workers: 16
+    proto:
+      n_prototypes: 16
+      proto_momentum: 0.99
+      proto_dim: 256
+      warm_up_epochs: 5
+      sigma_start: 0.2
+      sigma_end: 0.1
+    dispersion:
+      type: dispersion
+      lambda_dfl: 0.1
+      lambda_dpl: 0.1
+      kappa: 5.0
     loss:
       gan_loss:
         flip_equivariance: false
         gan_mode: lsgan
         lambda_NCE: 1
         nce_T: 0.07
-        nce_idt: true
+        nce_idt: false
         nce_includes_all_negatives_from_minibatch: false
-        nce_layers: 0,4,8,12,16
+        nce_layers: 4,8,12,16
         nce_num_patches: 256
-        lambda_asp: 1.0
+        lambda_asp: 10.0
         lambda_gp: 1.0
         asp_loss_mode: none
-        lambda_infoNCE: 1.0
-        disc_optim_freq: 5
-        temperature_infoNCE: 0.01
-        symmetric_infoNCE: true
+        lambda_align: 1.0
+        T_align: 0.2
+        T_R: 0.07
+        T_S: 0.05
+        capacity_factor: 2.0
     optimizer:
       class: Adam
-      lr: #  0.0002; 训练concut时需要调整为 0.00002 否则会出现梯度爆炸
+      lr:
         lr_D: 0.0002
         lr_G: 0.0002
         lr_E: 0.0002
@@ -71,12 +87,12 @@ train:
     save:
       continue_train: false
       epoch_count: 1
-      loss_logging_freq: 50
-      save_model_freq: 5
+      loss_logging_freq: 10
+      save_model_freq: 100
 test:
   run_id: ''
   is_apply_tissue_mask: true
   is_visualize: true
-  patch_batch_size: 8
+  patch_batch_size: 32
   n_img: 10
   save_stack: true
