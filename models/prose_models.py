@@ -69,9 +69,9 @@ class DispersionLoss(nn.Module):
 
 # --- Main PID Model Implementation ---
 
-class PIDModel(nn.Module):
+class PROSE(nn.Module):
     def __init__(self, opt, device):
-        super(PIDModel, self).__init__()
+        super(PROSE, self).__init__()
         self.device = device
         self.save_dir = opt['save_path']
         self.gpu_ids = opt['gpu_ids']

@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 import dataset as dataset_module
-from models.pid_models_11 import PIDModel
+from models.prose_models import PROSE
 from utils import flatten
 
 def setup_seed(seed=42):
@@ -34,7 +34,7 @@ def setup_seed(seed=42):
 
 def train(opt, device):
     """
-    Main training loop for PIDModel.
+    Main training loop for PROSE.
     """
     if not os.path.exists(opt["save_path"]):
         os.makedirs(opt["save_path"])
@@ -53,9 +53,9 @@ def train(opt, device):
         logging.info(f"{k}: {v}")
     logging.info("======================================")
     
-    # Model definition (PIDModel only)
+    # Model definition (PROSE only)
     if opt['gan_type'] == 'pid':
-        model = PIDModel(opt, device)
+        model = PROSE(opt, device)
     else:
         raise ValueError(f"Invalid GAN type: {opt['gan_type']}. This script only supports 'pid'.")
     
