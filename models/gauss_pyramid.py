@@ -2,9 +2,6 @@ import torch
 from torch import nn
 
 class Gauss_Pyramid_Conv(nn.Module):
-    """
-    Code borrowed from: https://github.com/csjliang/LPTN
-    """
     def __init__(self, num_high=3):
         super(Gauss_Pyramid_Conv, self).__init__()
 
